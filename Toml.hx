@@ -1,29 +1,23 @@
 // A poorly written parser for TOML v1.1.0
 // Specifications: https://toml.io/en/v1.1.0
 // Written solely by me, myself and i
+
 enum TomlTokenType {
     RSqrBracket;
     LSqrBracket;
-    Parenthesis;
+    RCurlyBracket;
+    LCurlyBracket;
     Equals;
+    SignPlus;
+    SignMinus;
+    Colon;
+    Comma;
 
-    Identifier;
+    Chars; // Just a bunch of letters
 
-    ValueString;
-    ValueInteger;
-    ValueHexadecimalNumber;
-    ValueOctalNumber;
-    ValueBinaryNumber;
-    ValueFloat; // fractional float
-    ValueExponentNumber;
-    ValueComplexNumber;
-    ValueBoolean;
-    ValueOffsetDateTime;
-    ValueLocalDateTime;
-    ValueLocalDate;
-    ValueLocalTime;
-    ValueArray;
-    ValueInlineTable;
+    BasicString;
+    LiteralString;
+    Number;
 }
 
 @:structInit
@@ -37,55 +31,81 @@ class TomlToken {
 class Toml {
     public static inline final version = "1.1.0";
 
-    static var fileContent:String;
-    static var filePos = 0;
-    static var fileEnd = -1;
-    static var tokens:Array<TomlToken> = [];
+    public static function parse(text:String) {
+        var tokens = scan(text);
+        // tables
+        // array of tables
+        // key-value pairs
 
-    public static function scan(text:String) {
-        fileContent = text;
-        fileEnd = fileContent.length-1;
+        var data:Map<String, Dynamic> = [];
 
-        while(true) {
-            var character = getNextCharacter();
-            if(character == null) break;
+        var index = 0;
+        var length = tokens.length;
+        var currentTable:Map<String, Dynamic> = null;
+        while (true) {
+            index++;
+            if (index >= length)
+                break;
+            var token = tokens[index];
 
-            switch(character) {
-                case "\n".code: continue; 
-                case ' '.code: continue;
-                case '\t'.code: continue;
-                case '\r'.code: continue;
+            switch (token.type) {
+                case LSqrBracket:
+                    var tok1 = tokens[index + 1];
 
-                case "#".code: // we ignore all the comments
-                    while(true) {
-                        var val = getNextCharacter();
-                        if(val == null || val == "\n".code) break;
+                    // Table
+                    if (tok1.type == Chars) {
+                        var tok2 = tokens[index + 2];
+                        if (tok2.type == RSqrBracket) {
+                            data.set(tok1.value, new Map<String, Dynamic>());
+                            currentTable = data.get(tok1.value);
+                        } else {
+                            // tables inside tables
+                            var parent = tok1.value;
+                            currentTable = parseNestedTables(data, data.get(parent), tokens, index+2, currentTable);
+                        }
+
+                        index++;
+                        continue;
                     }
-                case "=".code:
-                    tokens.push({value: "=", type: Equals, locationStart: filePos, locationLength: 0});
-                    scanValueTypes();
-                case "[".code:
-                    tokens.push({value: "[", type: LSqrBracket, locationStart: filePos, locationLength: 0});
-                case "]".code:
-                    tokens.push({value: "]", type: RSqrBracket, locationStart: filePos, locationLength: 0});
+                
+                // key value pairs
+                case Equals:
+                    var prevTok = tokens[index-1];
+                    var nextTok = tokens[index+1];
+                    if(currentTable != null) {
+                        currentTable.set(prevTok.value, null);
+                        // trace('${prevTok.value} = ${nextTok.value}');
+                    } else {
+                        // trace('${prevTok.value} = ${nextTok.value}');
+                    }
 
                 default:
-                    // TODO: inf, +inf, -inf
-                    // TODO: nan, +nan, -nan
             }
         }
 
-        for(token in tokens) {
-            trace('value: ${token.value} type: ${token.type} pos: ${token.locationStart}-${token.locationStart+token.locationLength}');
-        }
-
-        filePos = 0;
-        fileEnd = -1;
+        trace(data);
     }
 
+    // index is first nested table
+    static function parseNestedTables(data:Map<String, Dynamic>, parent:Map<String, Dynamic>, tokens:Array<TomlToken>, index:Int, currentTable:Map<String, Dynamic>):Map<String, Dynamic> {
+        var child = tokens[index];
+        var next = tokens[index+1];
+        if(next.type == RSqrBracket) {
+            parent.set(child.value, new Map<String, Dynamic>());
+            currentTable = parent.get(child.value);
+            return currentTable;
+        } else if(next.type == Chars) {
+            currentTable = parseNestedTables(data, parent.get(child.value), tokens, index+1, currentTable);
+            return currentTable;
+        }
+
+        return null;
+    }
+
+    // TODO
     public static function validate(text:String):Bool {
         var textBytes = haxe.io.Bytes.ofString(text);
-        if(!UnicodeString.validate(textBytes, UTF8)) {
+        if (!UnicodeString.validate(textBytes, UTF8)) {
             throw 'File is not encoded with UTF-8. Required by TOML v${version} spec';
             return false;
         }
@@ -93,148 +113,290 @@ class Toml {
         return false;
     }
 
-    inline static function scanValueTypes() {
-        while(true) {
-            var _next = getNextCharacter();
-            
-            switch(_next) {
-                case " ".code: 
+    public static function scan(text:String):Array<TomlToken> {
+        var tokens:Array<TomlToken> = [];
+
+        var pos = 0;
+        while (true) {
+            var character = StringTools.fastCodeAt(text, pos);
+            if (StringTools.isEof(character) || character == null)
+                break;
+            pos++;
+
+            switch (character) {
+                case "\n".code, "\t".code, "\r".code, " ".code:
                     continue;
 
-                // Array opening bracket
+                case "#".code:
+                    while (true) {
+                        pos++;
+                        character = StringTools.fastCodeAt(text, pos);
+                        if (character == "\n".code)
+                            break;
+                    }
                 case "[".code:
-                    tokens.push({value: "[", type: LSqrBracket, locationStart: filePos, locationLength: 0});
-                    while(true) {
-                        switch(StringTools.fastCodeAt(fileContent, filePos)) {
-                            case "[".code:
-                                tokens.push({value: "[", type: LSqrBracket, locationStart: filePos, locationLength: 0});
-                            case "]".code:
-                                tokens.push({value: "]", type: RSqrBracket, locationStart: filePos, locationLength: 0});
-                                break;
-                            default:
-                                scanValueTypes();
-                                break;
-                        }
-                    }
-                
+                    tokens.push({
+                        value: "[",
+                        type: LSqrBracket,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
                 case "]".code:
-                    tokens.push({value: "]", type: RSqrBracket, locationStart: filePos, locationLength: 0});
-                    break;
+                    tokens.push({
+                        value: "]",
+                        type: RSqrBracket,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case "=".code:
+                    tokens.push({
+                        value: "=",
+                        type: Equals,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case "}".code:
+                    tokens.push({
+                        value: "}",
+                        type: RCurlyBracket,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case "{".code:
+                    tokens.push({
+                        value: "{",
+                        type: LCurlyBracket,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case "+".code:
+                    tokens.push({
+                        value: "+",
+                        type: SignPlus,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case "-".code:
+                    tokens.push({
+                        value: "-",
+                        type: SignMinus,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case ":".code:
+                    tokens.push({
+                        value: ":",
+                        type: Colon,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
+                case ",".code:
+                    tokens.push({
+                        value: ",",
+                        type: Comma,
+                        locationStart: pos,
+                        locationLength: 0
+                    });
 
-                // Basic String
-                case "\"".code:
-                    var _startPos = filePos;
-                    var _value = "";
-                    var _length = 0;
-
-                    var fp1 = StringTools.fastCodeAt(fileContent, filePos-1);
-                    var fp2 = StringTools.fastCodeAt(fileContent, filePos+1);
-                    var fp3 = StringTools.fastCodeAt(fileContent, filePos);
-
-                    // TODO: Handle escape sequences
-                    if(fp1 == '\"'.code && fp2 == "\"".code && fp3 == "\"".code) {
-                        getNextCharacter(); // skip 2 characters
-                        getNextCharacter();
-
-                        // Multiline string
-                        while(true) {
-                            var next = getNextCharacter();
-                            _length++;
-                            if(StringTools.fastCodeAt(fileContent, filePos-1) == "\"".code && StringTools.fastCodeAt(fileContent, filePos+1) == "\"".code && StringTools.fastCodeAt(fileContent, filePos) == "\"".code) {
-                                tokens.push({value: _value, type: ValueString, locationStart: _startPos, locationLength: _length});
-                                break;
-                            } else {
-                                _value += String.fromCharCode(next);
-                            }
-                        }
-                    } else {
-                        // Basic string
-                        while(true) {
-                            var next = getNextCharacter();
-                            _length++;
-
-                            // TODO: This is a temporary solution, also fix this for inline strings
-                            if((StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == "\n".code) || (StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == "]".code) || (StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == ",".code)) {
-                                _value = _value.substr(0, _length-2);
-                                tokens.push({value: _value, type: ValueString, locationStart: _startPos, locationLength: _length});
-                                break;
-                            } else {
-                                _value += String.fromCharCode(next);
-                            }
-                        }
-                    }
-
-                // Inline strings (no escape sequences)
-                // I don't really like this duplicated code but its the simplest way I can think of rn
-                case "'".code:
-                    var _startPos = filePos;
-                    var _value = "";
-                    var _length = 0;
-
-                    var fp1 = StringTools.fastCodeAt(fileContent, filePos-1);
-                    var fp2 = StringTools.fastCodeAt(fileContent, filePos+1);
-                    var fp3 = StringTools.fastCodeAt(fileContent, filePos);
-
-                    if(fp1 == "'".code && fp2 == "'".code && fp3 == "'".code) {
-                        getNextCharacter(); // skip 2 characters
-                        getNextCharacter();
-
-                        // Multiline string
-                        while(true) {
-                            var next = getNextCharacter();
-                            _length++;
-                            if((StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == "\n".code) || (StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == "]".code) || (StringTools.fastCodeAt(fileContent, filePos-2) == "\"".code && next == ",".code)) {
-                                tokens.push({value: _value, type: ValueString, locationStart: _startPos, locationLength: _length});
-                                break;
-                            } else {
-                                _value += String.fromCharCode(next);
-                            }
-                        }
-                    } else {
-                        // Basic string
-                        while(true) {
-                            var next = getNextCharacter();
-                            _length++;
-
-                            if(next == "\n".code || next == "]".code || next == ",".code || next == " ".code) {
-                                _value = _value.substr(0, _length-2);
-                                tokens.push({value: _value, type: ValueString, locationStart: _startPos, locationLength: _length});
-                                break;
-                            } else {
-                                _value += String.fromCharCode(next);
-                            }
+                case '0'.code, '1'.code, '2'.code, '3'.code, '4'.code, '5'.code, '6'.code, '7'.code, '8'.code, '9'.code:
+                    var value = String.fromCharCode(character);
+                    var start = pos;
+                    var length = 0;
+                    while (true) {
+                        var character = StringTools.fastCodeAt(text, pos);
+                        if (!isDigit(character) && character != ".".code && character != "E".code && character != "e".code && character != "_".code
+                            && character != "x".code && character != "o".code && character != "b".code)
+                            break;
+                        else {
+                            value += String.fromCharCode(character);
+                            pos++;
+                            length++;
                         }
                     }
-
-
-                case "0".code, "1".code, "2".code, "3".code, "4".code, "5".code, "6".code, "7".code, "8".code, "9".code:
-                    // TODO: handle "_", "0x", "0o", "0b", ".", "e", "E"
-                    // TODO: handle Date-Time
-
-                    var _value = String.fromCharCode(_next);
-                    var _length = 0;
-                    var _start = filePos; 
-                    while(true) {
-                        var _next = getNextCharacter();
-                        switch(_next) {
-                            case "0".code, "1".code, "2".code, "3".code, "4".code, "5".code, "6".code, "7".code, "8".code, "9".code:
-                                _value += String.fromCharCode(_next);
-                                _length++;
-                            default:
-                                tokens.push({value: _value, type: ValueInteger, locationStart: _start, locationLength: _length});
-                                break;
-                        }
-                    }
+                    tokens.push({
+                        value: value,
+                        type: Number,
+                        locationStart: start,
+                        locationLength: length
+                    });
 
                 default:
-                    break;
+                    // BUG: Escape sequences for multiline strings break when they are near the start/end quotes
+                    if (character == "\"".code) {
+                        var c1 = StringTools.fastCodeAt(text, pos - 1);
+                        var c2 = StringTools.fastCodeAt(text, pos + 1);
+                        var c3 = StringTools.fastCodeAt(text, pos);
+
+                        if (c1 == "\"".code && c2 == "\"".code && c3 == "\"".code) {
+                            pos += 2;
+                            var start = pos;
+                            var length = 0;
+                            var value = "";
+
+                            while (true) {
+                                var c1 = StringTools.fastCodeAt(text, pos - 1);
+                                var c2 = StringTools.fastCodeAt(text, pos + 1);
+                                var c3 = StringTools.fastCodeAt(text, pos);
+                                pos++;
+                                length++;
+
+                                // trace(String.fromCharCode(c1)+String.fromCharCode(c3)+String.fromCharCode(c2));
+
+                                if (c1 == "\"".code && c2 == "\"".code && c3 == "\"".code) {
+                                    var _value = value.substr(0, length - 2);
+                                    pos += 2;
+                                    tokens.push({
+                                        value: _value,
+                                        type: BasicString,
+                                        locationStart: start,
+                                        locationLength: length
+                                    });
+                                    break;
+                                } else {
+                                    value += String.fromCharCode(c3);
+                                }
+                            }
+                        } else {
+                            pos++;
+                            var start = pos;
+                            var length = 0;
+                            var value = "";
+
+                            while (true) {
+                                var c1 = StringTools.fastCodeAt(text, pos - 1);
+                                var c2 = StringTools.fastCodeAt(text, pos + 1);
+                                var c3 = StringTools.fastCodeAt(text, pos);
+                                if (c1 == null && c2 == null && c3 == null)
+                                    break;
+                                pos++;
+                                length++;
+                                value += String.fromCharCode(c1);
+
+                                if (c3 == "\"".code && c1 != "\\".code) {
+                                    tokens.push({
+                                        value: value,
+                                        type: BasicString,
+                                        locationStart: start,
+                                        locationLength: length
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    } else if (character == "'".code) {
+                        var c1 = StringTools.fastCodeAt(text, pos - 1);
+                        var c2 = StringTools.fastCodeAt(text, pos + 1);
+                        var c3 = StringTools.fastCodeAt(text, pos);
+
+                        if (c1 == "\'".code && c2 == "\'".code && c3 == "\'".code) {
+                            pos += 2;
+                            var start = pos;
+                            var length = 0;
+                            var value = "";
+
+                            while (true) {
+                                var c1 = StringTools.fastCodeAt(text, pos - 1);
+                                var c2 = StringTools.fastCodeAt(text, pos + 1);
+                                var c3 = StringTools.fastCodeAt(text, pos);
+                                pos++;
+                                length++;
+
+                                if (c1 == "\'".code && c2 == "\'".code && c3 == "\'".code) {
+                                    var _value = value.substr(0, length - 2);
+                                    pos += 2;
+                                    tokens.push({
+                                        value: _value,
+                                        type: LiteralString,
+                                        locationStart: start,
+                                        locationLength: length
+                                    });
+                                    break;
+                                } else {
+                                    value += String.fromCharCode(c3);
+                                }
+                            }
+                        } else {
+                            pos++;
+                            var start = pos;
+                            var length = 0;
+                            var value = "";
+
+                            while (true) {
+                                var c1 = StringTools.fastCodeAt(text, pos - 1);
+                                var c2 = StringTools.fastCodeAt(text, pos + 1);
+                                var c3 = StringTools.fastCodeAt(text, pos);
+                                if (c1 == null && c2 == null && c3 == null)
+                                    break;
+                                pos++;
+                                length++;
+                                value += String.fromCharCode(c1);
+
+                                if (c3 == "\'".code && c1 != "\\".code) {
+                                    tokens.push({
+                                        value: value,
+                                        type: LiteralString,
+                                        locationStart: start,
+                                        locationLength: length
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    } else if (isAlphabet(character)) {
+                        var value = String.fromCharCode(character);
+                        var start = pos;
+                        var length = 0;
+                        while (true) {
+                            var character = StringTools.fastCodeAt(text, pos);
+                            if (!isAlphabet(character))
+                                break;
+                            else {
+                                value += String.fromCharCode(character);
+                                pos++;
+                                length++;
+                            }
+                        }
+                        tokens.push({
+                            value: value,
+                            type: Chars,
+                            locationStart: start,
+                            locationLength: length
+                        });
+                    }
             }
+        }
+
+        return tokens;
+    }
+
+    static inline function isDigit(character:Int):Bool {
+        return switch (character) {
+            default:
+                false;
+            case "0".code:
+                true;
+            case "1".code:
+                true;
+            case "2".code:
+                true;
+            case "3".code:
+                true;
+            case "4".code:
+                true;
+            case "5".code:
+                true;
+            case "6".code:
+                true;
+            case "7".code:
+                true;
+            case "8".code:
+                true;
+            case "9".code:
+                true;
         }
     }
 
-    inline static function getNextCharacter():Int {
-        var value = filePos <= fileEnd ? StringTools.fastCodeAt(fileContent, filePos) : null;
-        filePos++;
-        return value;
+    static inline function isAlphabet(character:Int):Bool {
+        return (character >= "a".code && character <= "z".code) || (character >= "A".code && character <= "Z".code);
     }
 }

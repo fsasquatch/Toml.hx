@@ -6,6 +6,6 @@ function main() {
     var fileContent = File.getContent(fileName);
 
     Timer.measure(() -> {
-        Toml.scan(fileContent);
+        Toml.parse(fileContent);
     });
 }
