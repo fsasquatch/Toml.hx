@@ -1,0 +1,4 @@
+-p ..
+-m Main
+--interp
+-debug

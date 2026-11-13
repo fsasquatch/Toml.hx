@@ -272,7 +272,7 @@ members = [
     "tooling/perf",
     "tooling/xtask",
 ]
-default-members = ["crates/zed"]
+#default-members = ["crates/zed"]
 
 [workspace.package]
 publish = false
