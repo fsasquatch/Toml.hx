@@ -3,7 +3,7 @@ A TOML parser for Haxe. Returns a `Map<String, Dynamic>`. Check the `test` folde
 
 ### To-Do
 In order of importance,
-- [] Date & Time
-- [] Inline tables
-- [] Array of tables
-- [] Validator
+- [ ] Date & Time
+- [ ] Inline tables
+- [ ] Array of tables
+- [ ] Validator
