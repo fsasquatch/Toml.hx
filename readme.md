@@ -5,7 +5,6 @@ A TOML parser for Haxe. Returns a `Map<String, Dynamic>`. Check the `test` folde
 Just copy the Toml.hx file into your project. I see no point in making this a library. Free for use do whatever you want.
 
 ## To-Do
-In order of importance,
 - [ ] Date & Time
 - [ ] Inline tables
 - [ ] Array of tables
